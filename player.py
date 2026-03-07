@@ -139,7 +139,11 @@ class TransformerPlayer(Player):
 
             # Break repetition loops — if the same position has appeared twice,
             # pick a random legal move to avoid drawing by repetition
+           
             if board.is_repetition(2):
+                captures = [m.uci() for m in legal_moves if board.is_capture(m)]
+                if captures:
+                    return random.choice(captures)
                 return random.choice(legal_uci)
 
             # Step 1: free generation, look for a legal move
