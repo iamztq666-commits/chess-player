@@ -47,7 +47,7 @@ class TransformerPlayer(Player):
     # ------------------------------------------------------------------
     @staticmethod
     def _build_prompt(fen: str) -> str:
-        return f"FEN: {fen} Move:"
+        return f"FEN: {fen} Best Move:"
 
     # ------------------------------------------------------------------
     # Step 1: sample NUM_CANDIDATES moves from the model freely.
@@ -135,6 +135,11 @@ class TransformerPlayer(Player):
 
             # If model failed to load, fall back to random (guarantees fallback=0)
             if self._model is None:
+                return random.choice(legal_uci)
+
+            # Break repetition loops — if the same position has appeared twice,
+            # pick a random legal move to avoid drawing by repetition
+            if board.is_repetition(2):
                 return random.choice(legal_uci)
 
             # Step 1: free generation, look for a legal move
