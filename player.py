@@ -10,7 +10,7 @@ class TransformerPlayer(Player):
     TEMPERATURE = 0.25
     NUM_CANDIDATES = 20
 
-    def __init__(self, name: str = "TransformerPlayerV5"):
+    def __init__(self, name: str = "TransformerPlayer"):
         super().__init__(name)
         self._model = None
         self._tokenizer = None
