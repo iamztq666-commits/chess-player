@@ -4,7 +4,7 @@ import chess
 
 from chess_tournament import Player
 
-class TransformerPlayerV5(Player):
+class TransformerPlayer(Player):
     HF_MODEL_ID = "hiiamkik/Chess-1.7B-v2"
     MAX_NEW_TOKENS = 8
     TEMPERATURE = 0.25
