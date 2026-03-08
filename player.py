@@ -16,8 +16,8 @@ class TransformerPlayer(Player):
         self._model        = None
         self._tokenizer    = None
         self._device       = None
-        self._move_history = []     # 只记录自己走的棋
-        self._pos_history  = {}     # position_key -> count
+        self._move_history = []
+        self._pos_history  = {}
 
     def _position_key_from_board(self, board: chess.Board) -> str:
         ep = chess.square_name(board.ep_square) if board.ep_square is not None else "-"
@@ -54,13 +54,22 @@ class TransformerPlayer(Player):
             print(f"[TransformerPlayer] Load failed: {e}")
             self._model = None
 
+    def _recent_moves_for_prompt(self, k: int = 10) -> list[str]:
+        hist = self._move_history[-k:]
+        if len(hist) >= 4:
+            tail = hist[-4:]
+            if tail[0] == tail[2] and tail[1] == tail[3] and tail[0] != tail[1]:
+                return hist[:-4]
+        return hist
+
     def _build_prompt(self, fen: str) -> str:
-        if self._move_history:
-            history_str = " ".join(self._move_history[-10:])
+        recent = self._recent_moves_for_prompt(10)
+        if recent:
+            history_str = " ".join(recent)
             return f"FEN: {fen} Moves: {history_str} Best Move:"
         return f"FEN: {fen} Best Move:"
 
-    def _is_back_and_forth(self, move: chess.Move) -> bool:
+    def _is_immediate_backtrack(self, move: chess.Move) -> bool:
         if not self._move_history:
             return False
         try:
@@ -69,6 +78,9 @@ class TransformerPlayer(Player):
         except Exception:
             return False
 
+    def _creates_two_step_cycle(self, move_uci: str) -> bool:
+        return len(self._move_history) >= 2 and self._move_history[-2] == move_uci
+
     def _heuristic_score(self, board: chess.Board, move: chess.Move) -> float:
         score = 0.0
         piece_value = {
@@ -76,33 +88,49 @@ class TransformerPlayer(Player):
             chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 0
         }
 
-        # 吃子奖励
-        if board.is_capture(move):
-            captured = board.piece_at(move.to_square)
-            if captured:
-                score += piece_value.get(captured.piece_type, 0)
+        moving_piece = board.piece_at(move.from_square)
+        captured_piece = None
 
-        # 升变奖励
+        if board.is_capture(move):
+            captured_piece = board.piece_at(move.to_square)
+            if captured_piece is None and board.ep_square == move.to_square:
+                captured_piece = chess.Piece(chess.PAWN, not board.turn)
+
+        if captured_piece:
+            score += piece_value.get(captured_piece.piece_type, 0)
+
         if move.promotion:
             score += piece_value.get(move.promotion, 0)
 
-        # 走后是否将军
+        if moving_piece and moving_piece.piece_type == chess.PAWN:
+            score += 0.25
+
         board.push(move)
+
         if board.is_check():
             score += 0.5
 
         next_key = self._position_key_from_board(board)
         repeat_count = self._pos_history.get(next_key, 0)
-        score -= repeat_count * 3.0
+        score -= repeat_count * 4.0
+
         board.pop()
 
-        # 明确惩罚二点往返
-        if self._is_back_and_forth(move):
-            score -= 8.0
+        if self._is_immediate_backtrack(move):
+            score -= 12.0
+
+        if self._creates_two_step_cycle(move.uci()):
+            score -= 10.0
+
+        if moving_piece and moving_piece.piece_type != chess.PAWN and not captured_piece:
+            score -= 0.4
+
+        if moving_piece and moving_piece.piece_type in (chess.KING, chess.ROOK):
+            score -= 0.35
 
         return score
 
-    def _heuristic_top_n(self, board: chess.Board, legal_moves: list, n: int = 10):
+    def _heuristic_top_n(self, board: chess.Board, legal_moves: list, n: int = 8):
         scored = [(m, self._heuristic_score(board, m)) for m in legal_moves]
         scored.sort(key=lambda x: x[1], reverse=True)
         return [m.uci() for m, _ in scored[:n]]
@@ -140,12 +168,15 @@ class TransformerPlayer(Player):
 
         best_score = float("-inf")
         best_move  = legal_uci[0]
-
         board = chess.Board(fen)
 
         for move in legal_uci:
             full_text = prompt + " " + move
-            inputs = self._tokenizer(full_text, return_tensors="pt", add_special_tokens=False).to(self._device)
+            inputs = self._tokenizer(
+                full_text,
+                return_tensors="pt",
+                add_special_tokens=False
+            ).to(self._device)
 
             with torch.no_grad():
                 logits = self._model(**inputs).logits
@@ -162,7 +193,6 @@ class TransformerPlayer(Player):
                 for i in range(len(move_ids))
             )
 
-            # 加一点 heuristic，避免纯LM锁死
             h_score = self._heuristic_score(board, chess.Move.from_uci(move))
             total_score = lm_score + 0.8 * h_score
 
@@ -183,6 +213,19 @@ class TransformerPlayer(Player):
             if not legal_moves:
                 return None
 
+            # 硬过滤循环招法
+            filtered_moves = []
+            for m in legal_moves:
+                u = m.uci()
+                if self._is_immediate_backtrack(m):
+                    continue
+                if self._creates_two_step_cycle(u):
+                    continue
+                filtered_moves.append(m)
+
+            if filtered_moves:
+                legal_moves = filtered_moves
+
             legal_uci = [m.uci() for m in legal_moves]
 
             if self._model is None:
@@ -192,14 +235,13 @@ class TransformerPlayer(Player):
 
             pos_key = self._position_key_from_board(board)
 
-            # 如果当前局面已经重复，强行更激进地避重复
             if self._pos_history.get(pos_key, 0) >= 2:
                 top = self._heuristic_top_n(board, legal_moves, n=5)
                 chosen = top[0] if top else random.choice(legal_uci)
                 self._move_history.append(chosen)
                 return chosen
 
-            top_moves = self._heuristic_top_n(board, legal_moves, n=10)
+            top_moves = self._heuristic_top_n(board, legal_moves, n=8)
             candidates = self._generate_candidates(fen)
 
             candidate_moves = []
