@@ -18,7 +18,7 @@ class TransformerPlayer(Player):
         self._move_history = []
         self._pos_history = {}
 
-    # ------------------ 核心功能 ------------------
+    # Core Functions!!!
     def _position_key_from_board(self, board: chess.Board) -> str:
         ep = chess.square_name(board.ep_square) if board.ep_square else "-"
         turn = "w" if board.turn == chess.WHITE else "b"
@@ -51,7 +51,7 @@ class TransformerPlayer(Player):
             print(f"[TransformerPlayerV5] Load failed: {e}")
             self._model = None
 
-    # ------------------ 循环检测 ------------------
+    # loop detection
     def _is_immediate_backtrack(self, move: chess.Move) -> bool:
         if not self._move_history:
             return False
@@ -62,14 +62,14 @@ class TransformerPlayer(Player):
         return len(self._move_history) >= 2 and self._move_history[-2] == move_uci
 
     def _creates_loop(self, move: chess.Move, k: int = 4) -> bool:
-        """禁止 k 步循环走法（默认4步）"""
+        """Prohibit k-step repetition (default 4 steps)"""
         if len(self._move_history) < k:
             return False
         recent = self._move_history[-k:]
         uci = move.uci()
         return uci in recent
 
-    # ------------------ 启发式评分 ------------------
+    # heuristic score
     def _heuristic_score(self, board: chess.Board, move: chess.Move) -> float:
         score = 0.0
         piece_value = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
@@ -101,7 +101,7 @@ class TransformerPlayer(Player):
         if self._creates_two_step_cycle(move.uci()):
             score -= 10.0
         if self._creates_loop(move, k=4):
-            score -= 20.0  # 强制禁止循环
+            score -= 20.0  # Strongly prohibit loops
         if moving_piece and moving_piece.piece_type != chess.PAWN and not captured_piece:
             score -= 0.4
         if moving_piece and moving_piece.piece_type in (chess.KING, chess.ROOK):
@@ -113,7 +113,7 @@ class TransformerPlayer(Player):
         scored.sort(key=lambda x: x[1], reverse=True)
         return [m.uci() for m, _ in scored[:n]]
 
-    # ------------------ 主决策逻辑 ------------------
+    # main decision logic 
     def _build_prompt(self, fen: str) -> str:
         if self._move_history:
             history_str = " ".join(self._move_history[-12:])
@@ -154,7 +154,7 @@ class TransformerPlayer(Player):
                 best_move = move
         return best_move
 
-    # ------------------ 外部接口 ------------------
+    # External Interface
     def get_move(self, fen: str) -> Optional[str]:
         if self._model is None:
             self._load_model()
