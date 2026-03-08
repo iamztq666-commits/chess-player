@@ -3,14 +3,14 @@ import chess
 import random
 from typing import Optional
 
-class TransformerPlayerV4(Player):
-
+class TransformerPlayerV4_1(Player):
     HF_MODEL_ID    = "hiiamkik/Chess-1.7B-v2"
     MAX_NEW_TOKENS = 8
     TEMPERATURE    = 0.25
     NUM_CANDIDATES = 20
+    OPENING_BOOK_MOVES = 40  # 前40手使用原开局策略
 
-    def __init__(self, name: str = "TransformerPlayerV4"):
+    def __init__(self, name: str = "TransformerPlayerV4_1"):
         super().__init__(name)
         self._model        = None
         self._tokenizer    = None
@@ -45,7 +45,7 @@ class TransformerPlayerV4(Player):
             ).to(self._device)
             self._model.eval()
         except Exception as e:
-            print(f"[TransformerPlayerV4] Load failed: {e}")
+            print(f"[TransformerPlayerV4_1] Load failed: {e}")
             self._model = None
 
     def _recent_moves_for_prompt(self, k: int = 12) -> list[str]:
@@ -113,13 +113,13 @@ class TransformerPlayerV4(Player):
         # 避免重复局面
         key = self._position_key_from_board(board)
         repeat_count = self._pos_history.get(key,0)
-        score -= repeat_count * 12.0  # 加大惩罚
+        score -= repeat_count * 15.0  # 强化重复局面惩罚
 
         board.pop()
 
         # 避免退回循环
         if self._is_immediate_backtrack(move) or self._creates_two_step_cycle(move.uci()):
-            score -= 15.0
+            score -= 20.0
 
         # 非捕获大子力移动惩罚
         if moving_piece and moving_piece.piece_type != chess.PAWN and not captured_piece:
@@ -145,6 +145,10 @@ class TransformerPlayerV4(Player):
         best_score = float("-inf")
         best_move  = legal_uci[0]
         board = chess.Board(fen)
+
+        # 开局阶段保留前40手
+        if len(self._move_history) < self.OPENING_BOOK_MOVES:
+            return random.choice(legal_uci)
 
         # Top moves 剪枝
         legal_moves_objs = [chess.Move.from_uci(m) for m in legal_uci]
@@ -179,6 +183,7 @@ class TransformerPlayerV4(Player):
         # 过滤退回 / 循环
         legal_moves = [m for m in legal_moves if not self._is_immediate_backtrack(m) and not self._creates_two_step_cycle(m.uci())]
         legal_uci = [m.uci() for m in legal_moves]
+
         chosen = self._score_legal_moves(fen, legal_uci)
         self._move_history.append(chosen)
         return chosen
